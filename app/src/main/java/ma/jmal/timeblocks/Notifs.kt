@@ -58,6 +58,7 @@ object Notifs {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
             .putExtra(ReminderActivity.EXTRA_TITLE, t.title)
             .putExtra(Scheduler.EXTRA_TASK_ID, t.id)
+            .putExtra(TimerService.EXTRA_AMBIENT, t.sound)
         val pi = activityPi(c, reminderId(t.id), open)
         val b = NotificationCompat.Builder(c, CH_REMINDER)
             .setSmallIcon(R.drawable.ic_stat_timer)
@@ -72,7 +73,7 @@ object Notifs {
         QUICK.forEachIndexed { i, sec ->
             b.addAction(
                 0, formatDuration(sec),
-                TimerService.pending(c, TimerService.ACTION_START, (t.id * 10 + i).toInt() + 50_000, sec, t.title, t.id),
+                TimerService.pending(c, TimerService.ACTION_START, (t.id * 10 + i).toInt() + 50_000, sec, t.title, t.id, t.sound),
             )
         }
         nm(c).notify(reminderId(t.id), b.build())

@@ -33,6 +33,7 @@ class ReminderActivity : ComponentActivity() {
         showOverLockScreen()
         val title = intent.getStringExtra(EXTRA_TITLE) ?: "مهمة"
         val taskId = intent.getLongExtra(Scheduler.EXTRA_TASK_ID, -1L)
+        val ambient = intent.getStringExtra(TimerService.EXTRA_AMBIENT)
         if (taskId >= 0) Notifs.nm(this).cancel(Notifs.reminderId(taskId))
 
         setContent {
@@ -53,7 +54,7 @@ class ReminderActivity : ComponentActivity() {
                         Text("كم من الوقت تحتاج؟", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(12.dp))
                         DurationPicker(onPick = { sec ->
-                            TimerService.send(this@ReminderActivity, TimerService.ACTION_START, sec, title, taskId)
+                            TimerService.send(this@ReminderActivity, TimerService.ACTION_START, sec, title, taskId, ambient)
                             finish()
                         })
                         Spacer(Modifier.height(16.dp))

@@ -11,6 +11,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Update
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 /** A scheduled task. For weekly tasks, [daysMask] has bit (Calendar.DAY_OF_WEEK - 1) set per day. */
@@ -23,6 +25,10 @@ data class TaskItem(
     val repeat: Int = REPEAT_ONCE,
     val daysMask: Int = 0,
     val enabled: Boolean = true,
+    /** Index into [TASK_COLORS]. */
+    val color: Int = 0,
+    /** Ambient sound id for this task; "" = use the default from settings. */
+    val sound: String = "",
 ) {
     companion object {
         const val REPEAT_ONCE = 0
@@ -72,16 +78,24 @@ interface AppDao {
     suspend fun deleteLog(e: LogEntry)
 }
 
-@Database(entities = [TaskItem::class, LogEntry::class], version = 1, exportSchema = false)
+@Database(entities = [TaskItem::class, LogEntry::class], version = 2, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): AppDao
 
     companion object {
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tasks ADD COLUMN color INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE tasks ADD COLUMN sound TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         @Volatile
         private var inst: AppDb? = null
 
         fun get(c: Context): AppDb = inst ?: synchronized(this) {
             inst ?: Room.databaseBuilder(c.applicationContext, AppDb::class.java, "timeblocks.db")
+                .addMigrations(MIGRATION_1_2)
                 .build().also { inst = it }
         }
     }

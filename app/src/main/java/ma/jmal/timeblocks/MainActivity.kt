@@ -37,6 +37,14 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -119,6 +127,7 @@ fun MainScreen() {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showQuick by remember { mutableStateOf(false) }
     var showAdd by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<TaskItem?>(null) }
     var startFor by remember { mutableStateOf<TaskItem?>(null) }
 
     // Re-check permissions every time the user comes back from Settings.
@@ -142,10 +151,14 @@ fun MainScreen() {
                     selected = tab == 1, onClick = { tab = 1 },
                     icon = { Icon(Icons.Filled.DateRange, null) }, label = { Text("السجل") },
                 )
+                NavigationBarItem(
+                    selected = tab == 2, onClick = { tab = 2 },
+                    icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("الإعدادات") },
+                )
             }
         },
         floatingActionButton = {
-            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (tab != 2) Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (tab == 0) {
                     SmallFloatingActionButton(onClick = { showAdd = true }) {
                         Icon(Icons.Filled.Add, contentDescription = "مهمة مجدولة")
@@ -163,14 +176,16 @@ fun MainScreen() {
             PermissionBanners(resumeTick)
             timer?.let { ActiveTimerCard(it) }
             when (tab) {
-                0 -> TasksTab(onStart = { startFor = it })
-                else -> LogTab()
+                0 -> TasksTab(onStart = { startFor = it }, onEdit = { editing = it })
+                1 -> LogTab()
+                else -> SettingsTab()
             }
         }
     }
 
     if (showQuick) QuickTaskDialog(onDismiss = { showQuick = false })
     if (showAdd) AddTaskDialog(onDismiss = { showAdd = false })
+    editing?.let { e -> AddTaskDialog(existing = e, onDismiss = { editing = null }) }
     startFor?.let { t ->
         AlertDialog(
             onDismissRequest = { startFor = null },
@@ -178,7 +193,7 @@ fun MainScreen() {
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     DurationPicker(onPick = { sec ->
-                        TimerService.send(ctx, TimerService.ACTION_START, sec, t.title)
+                        TimerService.send(ctx, TimerService.ACTION_START, sec, t.title, ambient = t.sound)
                         startFor = null
                     })
                 }
@@ -189,7 +204,7 @@ fun MainScreen() {
 }
 
 @Composable
-private fun TasksTab(onStart: (TaskItem) -> Unit) {
+private fun TasksTab(onStart: (TaskItem) -> Unit, onEdit: (TaskItem) -> Unit) {
     val ctx = LocalContext.current
     val dao = remember { AppDb.get(ctx).dao() }
     val flow = remember { dao.tasksFlow() }
@@ -206,11 +221,17 @@ private fun TasksTab(onStart: (TaskItem) -> Unit) {
     }
     LazyColumn(contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 140.dp)) {
         items(tasks, key = { it.id }) { t ->
-            Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
+            Card(Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onEdit(t) }) {
+                Row(Modifier.height(IntrinsicSize.Min), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(8.dp).fillMaxHeight().background(taskColor(t.color)))
+                    Column(Modifier.weight(1f).padding(12.dp)) {
                         Text(t.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text("${hm(t.hour, t.minute)} • ${repeatText(t)}", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            hm(t.hour, t.minute), style = MaterialTheme.typography.headlineSmall,
+                            color = taskColor(t.color), fontWeight = FontWeight.Bold,
+                        )
+                        Text(repeatText(t), style = MaterialTheme.typography.bodyMedium)
+                        if (t.sound.isNotEmpty()) Text(Sounds.ambientLabel(t.sound), style = MaterialTheme.typography.bodySmall)
                     }
                     IconButton(onClick = { onStart(t) }) { Icon(Icons.Filled.PlayArrow, "ابدأ الآن") }
                     Switch(
@@ -231,6 +252,18 @@ private fun TasksTab(onStart: (TaskItem) -> Unit) {
 
 @Composable
 private fun LogTab() {
+    var week by rememberSaveable { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = !week, onClick = { week = false }, label = { Text("يومي") })
+            FilterChip(selected = week, onClick = { week = true }, label = { Text("أسبوعي") })
+        }
+        if (week) WeekLog() else DayLog()
+    }
+}
+
+@Composable
+private fun DayLog() {
     val ctx = LocalContext.current
     val dao = remember { AppDb.get(ctx).dao() }
     var dayOffset by rememberSaveable { mutableIntStateOf(0) }
@@ -260,17 +293,7 @@ private fun LogTab() {
             )
             TextButton(onClick = { dayOffset++ }, enabled = dayOffset < 0) { Text("التالي ←") }
         }
-        val total = entries.sumOf { it.actualSec }
-        val planned = entries.sumOf { it.plannedSec }
-        Card(
-            Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-        ) {
-            Column(Modifier.padding(12.dp)) {
-                Text("${entries.size} مهام منجزة", fontWeight = FontWeight.Bold)
-                Text("الوقت الفعلي: ${formatDuration(total)} • المخطط: ${formatDuration(planned)}")
-            }
-        }
+        SummaryCard(entries)
         LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
             items(entries, key = { it.id }) { e ->
                 Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
@@ -297,9 +320,93 @@ private fun LogTab() {
 }
 
 @Composable
+private fun SummaryCard(entries: List<LogEntry>) {
+    val total = entries.sumOf { it.actualSec }
+    val planned = entries.sumOf { it.plannedSec }
+    Card(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text("${entries.size} مهام منجزة", fontWeight = FontWeight.Bold)
+            Text("الوقت الفعلي: ${formatDuration(total)} • المخطط: ${formatDuration(planned)}")
+        }
+    }
+}
+
+@Composable
+private fun WeekLog() {
+    val ctx = LocalContext.current
+    val dao = remember { AppDb.get(ctx).dao() }
+    var weekOffset by rememberSaveable { mutableIntStateOf(0) }
+    val from = remember(weekOffset) {
+        Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            // Back to Monday.
+            add(Calendar.DAY_OF_YEAR, -((get(Calendar.DAY_OF_WEEK) + 5) % 7))
+            add(Calendar.WEEK_OF_YEAR, weekOffset)
+        }.timeInMillis
+    }
+    val days = remember(from) {
+        (0..7).map { i -> Calendar.getInstance().apply { timeInMillis = from; add(Calendar.DAY_OF_YEAR, i) }.timeInMillis }
+    }
+    val flow = remember(from) { dao.logFlow(from, days[7]) }
+    val entries by flow.collectAsState(initial = emptyList())
+    val dateFmt = remember { SimpleDateFormat("d MMM", AR) }
+    val dayName = remember { SimpleDateFormat("EEEE", AR) }
+
+    val perDay = (0..6).map { i -> entries.filter { it.finishedAt >= days[i] && it.finishedAt < days[i + 1] } }
+    val maxSec = perDay.maxOf { d -> d.sumOf { it.actualSec } }.coerceAtLeast(1)
+    val top = entries.groupBy { it.title }.mapValues { (_, v) -> v.sumOf { it.actualSec } }
+        .entries.sortedByDescending { it.value }.take(5)
+
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(bottom = 140.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { weekOffset-- }) { Text("→ السابق") }
+                Text(
+                    if (weekOffset == 0) "هذا الأسبوع"
+                    else "${dateFmt.format(Date(days[0]))} – ${dateFmt.format(Date(days[6]))}",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                )
+                TextButton(onClick = { weekOffset++ }, enabled = weekOffset < 0) { Text("التالي ←") }
+            }
+            SummaryCard(entries)
+        }
+        items(7) { i ->
+            val sec = perDay[i].sumOf { it.actualSec }
+            Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                Row {
+                    Text(dayName.format(Date(days[i])), Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                    Text(if (sec == 0) "—" else "${formatDuration(sec)} • ${perDay[i].size} مهام")
+                }
+                LinearProgressIndicator(
+                    progress = { sec.toFloat() / maxSec },
+                    modifier = Modifier.fillMaxWidth().height(10.dp).padding(top = 4.dp),
+                    strokeCap = StrokeCap.Round,
+                )
+            }
+        }
+        if (top.isNotEmpty()) item {
+            Card(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("🏆 أكثر المهام وقتًا", fontWeight = FontWeight.Bold)
+                    top.forEach { (t, v) ->
+                        Row { Text(t, Modifier.weight(1f)); Text(formatDuration(v)) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun QuickTaskDialog(onDismiss: () -> Unit) {
     val ctx = LocalContext.current
     var title by remember { mutableStateOf("") }
+    var amb by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("مهمة فورية") },
@@ -310,9 +417,12 @@ private fun QuickTaskDialog(onDismiss: () -> Unit) {
                     label = { Text("ماذا ستفعل؟") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(12.dp))
+                Text("صوت الخلفية")
+                AmbientPicker(selected = amb, onSelect = { amb = it }, withDefault = true)
+                Spacer(Modifier.height(12.dp))
                 DurationPicker(onPick = { sec ->
-                    TimerService.send(ctx, TimerService.ACTION_START, sec, title.ifBlank { "مهمة فورية" })
+                    TimerService.send(ctx, TimerService.ACTION_START, sec, title.ifBlank { "مهمة فورية" }, ambient = amb)
                     onDismiss()
                 })
             }
@@ -322,19 +432,23 @@ private fun QuickTaskDialog(onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun AddTaskDialog(onDismiss: () -> Unit) {
+private fun AddTaskDialog(onDismiss: () -> Unit, existing: TaskItem? = null) {
     val ctx = LocalContext.current
-    val now = remember { Calendar.getInstance() }
-    var title by remember { mutableStateOf("") }
-    var hour by remember { mutableIntStateOf(now.get(Calendar.HOUR_OF_DAY)) }
-    var minute by remember { mutableIntStateOf((now.get(Calendar.MINUTE) + 5) % 60) }
-    var repeat by remember { mutableIntStateOf(TaskItem.REPEAT_ONCE) }
-    var mask by remember { mutableIntStateOf(1 shl (now.get(Calendar.DAY_OF_WEEK) - 1)) }
+    val now = remember { Calendar.getInstance().apply { add(Calendar.MINUTE, 5) } }
+    var title by remember { mutableStateOf(existing?.title ?: "") }
+    var hour by remember { mutableIntStateOf(existing?.hour ?: now.get(Calendar.HOUR_OF_DAY)) }
+    var minute by remember { mutableIntStateOf(existing?.minute ?: now.get(Calendar.MINUTE)) }
+    var repeat by remember { mutableIntStateOf(existing?.repeat ?: TaskItem.REPEAT_ONCE) }
+    var mask by remember {
+        mutableIntStateOf(existing?.daysMask?.takeIf { it != 0 } ?: (1 shl (now.get(Calendar.DAY_OF_WEEK) - 1)))
+    }
+    var color by remember { mutableIntStateOf(existing?.color ?: 0) }
+    var sound by remember { mutableStateOf(existing?.sound ?: "") }
     val valid = title.isNotBlank() && (repeat != TaskItem.REPEAT_WEEKLY || mask != 0)
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("مهمة مجدولة") },
+        title = { Text(if (existing == null) "مهمة مجدولة" else "تعديل المهمة") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
@@ -370,18 +484,28 @@ private fun AddTaskDialog(onDismiss: () -> Unit) {
                         }
                     }
                 }
+                Text("اللون")
+                ColorPicker(selected = color, onSelect = { color = it })
+                Text("صوت الخلفية أثناء المهمة")
+                AmbientPicker(selected = sound, onSelect = { sound = it }, withDefault = true)
             }
         },
         confirmButton = {
             TextButton(enabled = valid, onClick = {
-                val t = TaskItem(
+                val t = (existing ?: TaskItem(title = "", hour = 0, minute = 0)).copy(
                     title = title.trim(), hour = hour, minute = minute, repeat = repeat,
                     daysMask = if (repeat == TaskItem.REPEAT_WEEKLY) mask else 0,
+                    color = color, sound = sound, enabled = true,
                 )
                 App.io.launch {
                     val dao = AppDb.get(ctx).dao()
-                    val id = dao.insert(t)
-                    Scheduler.schedule(ctx, t.copy(id = id))
+                    if (existing == null) {
+                        val id = dao.insert(t)
+                        Scheduler.schedule(ctx, t.copy(id = id))
+                    } else {
+                        dao.update(t)
+                        Scheduler.schedule(ctx, t)
+                    }
                 }
                 onDismiss()
             }) { Text("حفظ") }

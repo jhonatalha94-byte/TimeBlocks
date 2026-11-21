@@ -13,6 +13,8 @@ data class TimerState(
     val pausedAt: Long = 0L,
     val pausedTotal: Long = 0L,
     val ringing: Boolean = false,
+    /** Ambient sound id playing during the block ("none" = silent). */
+    val ambient: String = "none",
 ) {
     val isPaused get() = pausedAt > 0L
 
@@ -46,6 +48,7 @@ object TimerStore {
             pausedAt = p.getLong("pausedAt", 0L),
             pausedTotal = p.getLong("pausedTotal", 0L),
             ringing = p.getBoolean("ringing", false),
+            ambient = p.getString("ambient", "none") ?: "none",
         )
     }
 
@@ -60,6 +63,7 @@ object TimerStore {
                 .putLong("pausedAt", s.pausedAt)
                 .putLong("pausedTotal", s.pausedTotal)
                 .putBoolean("ringing", s.ringing)
+                .putString("ambient", s.ambient)
         }
         e.apply()
         _state.value = s
